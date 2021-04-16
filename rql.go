@@ -14,6 +14,11 @@ import (
 	"unicode"
 )
 
+type Field interface {
+	FilterValue(value interface{}) (interface{}, error)
+	FilterOps() []Op
+}
+
 //go:generate easyjson -omit_empty -disallow_unknown_fields -snake_case rql.go
 
 // Query is the decoded result of the user input.
@@ -290,6 +295,19 @@ func (p *Parser) parseField(sf reflect.StructField) error {
 		}
 	}
 	var filterOps []Op
+	if ft, ok := reflect.Zero(sf.Type).Interface().(Field); ok {
+		f.ValidateFn = func(value interface{}) error {
+			_, err := ft.FilterValue(value)
+			return err
+		}
+		f.CovertFn = func(value interface{}) interface{} {
+			v, _ := ft.FilterValue(value)
+			return v
+		}
+		filterOps = append(filterOps, ft.FilterOps()...)
+		goto FINAL
+	}
+
 	switch typ := indirect(sf.Type); typ.Kind() {
 	case reflect.Bool:
 		f.ValidateFn = validateBool
@@ -338,6 +356,8 @@ func (p *Parser) parseField(sf reflect.StructField) error {
 	default:
 		return fmt.Errorf("rql: field type for %q is not supported", sf.Name)
 	}
+
+FINAL:
 	for _, op := range filterOps {
 		f.FilterOps[p.op(op)] = true
 	}
